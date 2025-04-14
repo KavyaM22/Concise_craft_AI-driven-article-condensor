@@ -7,7 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1eeLAUmiKbc0oYpcstOC_86Xh-Yp45Sp_
 """
 
-%%writefile app.py
 import streamlit as st
 import pandas as pd
 import nltk
