@@ -25,7 +25,7 @@ from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
 from transformers import (
     BartForConditionalGeneration, BartTokenizer,
-    MBartForConditionalGeneration, MBart50TokenizerFast
+    MBartForConditionalGeneration, MBart50Tokenizer
 )
 from summa.summarizer import summarize as textrank_summarize
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -82,8 +82,7 @@ def save_summary(source_type, summary_method, language, domain, summary_text, or
 def load_models():
     bart_tokenizer = BartTokenizer.from_pretrained("facebook/bart-large-cnn")
     bart_model = BartForConditionalGeneration.from_pretrained("facebook/bart-large-cnn")
-
-    mbart_tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
+    mbart_tokenizer = MBart50Tokenizer.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
     mbart_model = MBartForConditionalGeneration.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
 
     return {
