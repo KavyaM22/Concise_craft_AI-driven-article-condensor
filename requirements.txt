@@ -1,0 +1,12 @@
+streamlit
+pandas
+nltk
+torch
+pymupdf
+python-docx
+newspaper3k
+transformers
+summa
+vaderSentiment
+textstat
+rouge
