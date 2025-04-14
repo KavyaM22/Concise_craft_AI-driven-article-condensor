@@ -17,9 +17,10 @@ import string
 import uuid
 import json
 import os
+import requests
 from datetime import datetime
 from docx import Document
-from newspaper import Article
+from bs4 import BeautifulSoup
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
 from transformers import (
@@ -129,10 +130,13 @@ def extract_text_from_docx(uploaded_file):
     return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
 
 def extract_text_from_url(url):
-    article = Article(url)
-    article.download()
-    article.parse()
-    return article.text
+    try:
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+        paragraphs = soup.find_all("p")
+        return "\n".join([p.get_text() for p in paragraphs if p.get_text().strip()])
+    except Exception as e:
+        return f"Error extracting article: {str(e)}"
 
 def translate_text(text, tgt_lang):
     if tgt_lang not in LANGUAGE_CODE_MAP:
