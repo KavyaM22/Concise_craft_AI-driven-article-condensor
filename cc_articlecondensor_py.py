@@ -25,9 +25,7 @@ from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
 from transformers import (
     BartForConditionalGeneration, BartTokenizer,
-    MBartForConditionalGeneration, MBart50TokenizerFast,
-    PegasusForConditionalGeneration, PegasusTokenizer,
-    T5ForConditionalGeneration, T5Tokenizer
+    MBartForConditionalGeneration, MBart50TokenizerFast
 )
 from summa.summarizer import summarize as textrank_summarize
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
