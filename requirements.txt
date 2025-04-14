@@ -4,11 +4,11 @@ nltk
 torch
 pymupdf
 python-docx
-newspaper3k
 transformers
 summa
 vaderSentiment
 textstat
 rouge
-lxml==5.3.2
-beautifulsoup4==4.13.3
+lxml
+beautifulsoup4
+requests
