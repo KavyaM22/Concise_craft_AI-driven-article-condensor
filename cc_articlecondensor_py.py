@@ -7,635 +7,634 @@ Original file is located at
     https://colab.research.google.com/drive/1eeLAUmiKbc0oYpcstOC_86Xh-Yp45Sp_
 """
 
-# Commented out IPython magic to ensure Python compatibility.
-# %%writefile app.py
-# import streamlit as st
-# import pandas as pd
-# import nltk
-# import torch
-# import fitz  # PyMuPDF for extracting text from PDFs
-# import docx  # for extracting text from Word documents
-# import string
-# import uuid
-# import json
-# import os
-# from datetime import datetime
-# from docx import Document
-# from newspaper import Article
-# from nltk.tokenize import word_tokenize, sent_tokenize
-# from nltk.corpus import stopwords
-# from transformers import (
-#     BartForConditionalGeneration, BartTokenizer,
-#     MBartForConditionalGeneration, MBart50TokenizerFast,
-#     PegasusForConditionalGeneration, PegasusTokenizer,
-#     T5ForConditionalGeneration, T5Tokenizer
-# )
-# from summa.summarizer import summarize as textrank_summarize
-# from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-# 
-# # Set page config - this must be the first Streamlit command
-# st.set_page_config(
-#     page_title="Concise Craft: AI-Driven Article Condenser",
-#     page_icon="📝",
-#     layout="wide",
-#     initial_sidebar_state="expanded"
-# )
-# 
-# # Load NLP models - fix for punkt tokenizer
-# nltk.download("punkt", quiet=True)
-# nltk.download("stopwords", quiet=True)
-# nltk.download("punkt_tab", quiet=True)
-# 
-# sentiment_analyzer = SentimentIntensityAnalyzer()
-# 
-# # Create a directory for saving summaries if it doesn't exist
-# if not os.path.exists("summary_history"):
-#     os.makedirs("summary_history")
-# 
-# # Load summary history if it exists
-# def load_summary_history():
-#     if os.path.exists("summary_history/history.json"):
-#         with open("summary_history/history.json", "r") as f:
-#             return json.load(f)
-#     return []
-# 
-# # Save a summary to history
-# def save_summary(source_type, summary_method, language, domain, summary_text, original_text=None):
-#     history = load_summary_history()
-#     summary_id = str(uuid.uuid4())
-#     summary_entry = {
-#         "id": summary_id,
-#         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-#         "source_type": source_type,
-#         "method": summary_method,
-#         "language": language,
-#         "domain": domain,
-#         "summary": summary_text,
-#         "original_text_preview": original_text[:200] + "..." if original_text else None
-#     }
-#     history.append(summary_entry)
-# 
-#     with open("summary_history/history.json", "w") as f:
-#         json.dump(history, f)
-# 
-#     return summary_id
-# 
-# # Cache models to avoid reloading - Use only the models we need to reduce memory usage
-# @st.cache_resource
-# def load_models():
-#     bart_tokenizer = BartTokenizer.from_pretrained("facebook/bart-large-cnn")
-#     bart_model = BartForConditionalGeneration.from_pretrained("facebook/bart-large-cnn")
-# 
-#     mbart_tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
-#     mbart_model = MBartForConditionalGeneration.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
-# 
-#     return {
-#         "bart": (bart_tokenizer, bart_model),
-#         "mbart": (mbart_tokenizer, mbart_model)
-#     }
-# 
-# models = load_models()
-# 
-# # Define correct language codes for mBART
-# LANGUAGE_CODE_MAP = {
-#     "English": "en_XX",
-#     "French": "fr_XX",
-#     "Spanish": "es_XX",
-#     "German": "de_DE",
-#     "Hindi": "hi_IN",
-#     "Chinese": "zh_CN"
-# }
-# 
-# # Domain-specific models mapping - simplified to use only BART
-# DOMAIN_MODELS = {
-#     "General": "bart",
-#     "News": "bart",
-#     "Academic": "bart",
-#     "Legal": "bart",
-#     "Technical": "bart"
-# }
-# 
-# def extract_text_from_pdf(uploaded_file):
-#     doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-#     return "\n".join([page.get_text("text") for page in doc])
-# 
-# def extract_text_from_csv(uploaded_file):
-#     df = pd.read_csv(uploaded_file)
-#     text_columns = df.select_dtypes(include=['object'])
-#     if text_columns.empty:
-#         return "No textual data found in CSV file."
-#     return "\n".join(text_columns.astype(str).apply(lambda x: ' '.join(x), axis=1))
-# 
-# def extract_text_from_docx(uploaded_file):
-#     doc = Document(uploaded_file)
-#     return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
-# 
-# def extract_text_from_url(url):
-#     article = Article(url)
-#     article.download()
-#     article.parse()
-#     return article.text
-# 
-# def translate_text(text, tgt_lang):
-#     if tgt_lang not in LANGUAGE_CODE_MAP:
-#         return "Error: Unsupported Language!"
-# 
-#     # Handle potential issues with long text
-#     if len(text) > 1000:
-#         # For very long texts, truncate to avoid issues
-#         text = text[:1000] + "..."
-# 
-#     mbart_tokenizer, mbart_model = models["mbart"]
-#     encoded_text = mbart_tokenizer(text, return_tensors="pt")
-#     generated_tokens = mbart_model.generate(
-#         **encoded_text,
-#         forced_bos_token_id=mbart_tokenizer.lang_code_to_id[LANGUAGE_CODE_MAP[tgt_lang]]
-#     )
-# 
-#     return mbart_tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
-# 
-# def chunk_long_document(text, chunk_size=5000):
-#     """
-#     Split a very long document into manageable chunks
-#     """
-#     words = text.split()
-#     return [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
-# 
-# def extractive_summary(text, summary_length):
-#     """
-#     Generate an extractive summary using TextRank algorithm
-#     """
-#     # Check if text is long enough for summarization
-#     if len(text.split()) < 100:
-#         return text
-# 
-#     # For very long texts, create a shortened version for summarization
-#     if len(text) > 50000:  # Approximate char limit for summarize function
-#         text = text[:50000]
-# 
-#     summary = textrank_summarize(text, words=summary_length)
-# 
-#     # If summarization fails, return the first part of the text up to summary_length
-#     if not summary:
-#         words = text.split()
-#         if len(words) > summary_length:
-#             return " ".join(words[:summary_length])
-#         return text
-# 
-#     return summary
-# 
-# def abstractive_summary(text, summary_length, domain="General"):
-#     """
-#     Generate an abstractive summary using BART
-#     Optimized for speed by using only one model
-#     """
-#     # Get the appropriate tokenizer and model
-#     tokenizer, model = models["bart"]
-# 
-#     # Limit input text to prevent model from hallucinating on long inputs
-#     max_input_length = 1024
-#     truncated_text = text[:max_input_length]
-# 
-#     # Map summary_length to appropriate token counts based on desired word count
-#     # Approximate token-to-word ratio for English is roughly 1.3
-#     token_multiplier = 1.3
-#     min_tokens = int(summary_length * 0.8 * token_multiplier)
-#     max_tokens = int(summary_length * 1.2 * token_multiplier)
-# 
-#     # For very long summaries, we need to ensure we're not exceeding model limits
-#     max_tokens = min(max_tokens, 512)  # Cap maximum tokens for faster generation
-# 
-#     # Configure generation parameters
-#     inputs = tokenizer(truncated_text, return_tensors="pt", max_length=max_input_length, truncation=True)
-# 
-#     # Use faster generation settings
-#     summary_ids = model.generate(
-#         inputs["input_ids"],
-#         max_length=max_tokens,
-#         min_length=min_tokens,
-#         length_penalty=2.0, # favors shorter summaries.
-#         num_beams=2,  # controls the search for the best summary
-#         early_stopping=True,
-#         no_repeat_ngram_size=2,  # avoids repeating short phrases.
-#         do_sample=False #disables randomness to keep output stable.
-#     )
-# 
-#     return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-# 
-# def summarize_long_document(text, summary_length, method="Extractive", domain="General"):
-#     """
-#     Handles very long documents by:
-#     1. Splitting into chunks
-#     2. Summarizing each chunk
-#     3. Combining and summarizing again
-#     """
-#     # If document is not very long, summarize directly
-#     word_count = len(text.split())
-#     if word_count < 10000:
-#         if method == "Extractive":
-#             return extractive_summary(text, summary_length)
-#         else:
-#             return abstractive_summary(text, summary_length, domain)
-# 
-#     # For very long documents, use a hierarchical approach
-#     chunks = chunk_long_document(text)
-# 
-#     # First level: summarize each chunk
-#     chunk_summaries = []
-#     chunk_summary_length = min(250, summary_length // 2)
-# 
-#     for chunk in chunks:
-#         if method == "Extractive":
-#             chunk_summary = extractive_summary(chunk, chunk_summary_length)
-#         else:
-#             chunk_summary = abstractive_summary(chunk, chunk_summary_length, domain)
-#         chunk_summaries.append(chunk_summary)
-# 
-#     # Second level: summarize the combined summaries
-#     combined_summaries = " ".join(chunk_summaries)
-# 
-#     if method == "Extractive":
-#         final_summary = extractive_summary(combined_summaries, summary_length)
-#     else:
-#         final_summary = abstractive_summary(combined_summaries, summary_length, domain)
-# 
-#     return final_summary
-# 
-# def sentiment_analysis(text):
-#     # For very long texts, analyze only the first part
-#     if len(text) > 10000:
-#         text = text[:10000]
-# 
-#     scores = sentiment_analyzer.polarity_scores(text)
-#     if scores['compound'] >= 0.05:
-#         return "Positive 😊", scores
-#     elif scores['compound'] <= -0.05:
-#         return "Negative 😞", scores
-#     else:
-#         return "Neutral 😐", scores
-# 
-# def home_page():
-#     st.title("Welcome to Concise Craft: AI-Driven Article Condenser")
-#     st.write("Experience the power of AI in summarizing articles efficiently and accurately.")
-# 
-#     st.subheader("Key Features")
-#     st.markdown("""
-#     - **Multiple Summarization Methods**: Choose between extractive and abstractive summarization
-#     - **Domain-Specific Summarization**: Optimize for different content types (news, academic, legal)
-#     - **Multilingual Support**: Translate summaries into multiple languages
-#     - **Sentiment Analysis**: Analyze the sentiment tone of your summaries
-#     - **Summary History**: Save and access your previous summaries
-#     """)
-# 
-#     st.subheader("Get Started")
-#     st.markdown("""
-#     Navigate to the "Summarization" page to start condensing your content:
-#     1. Upload a document, enter a URL, or paste text
-#     2. Choose your preferred summarization method and settings
-#     3. Generate a high-quality summary tailored to your needs
-#     """)
-# 
-# def about_page():
-#     st.title("About Concise Craft")
-#     st.write("Concise Craft is an AI-powered tool designed to condense long articles into clear and concise summaries. It supports both extractive and abstractive summarization methods, allowing users to choose the best approach for their needs.")
-# 
-#     st.header("How to Use Concise Craft")
-# 
-#     st.subheader("Step 1: Choose Your Input Method")
-#     st.markdown("""
-#     - **Upload a File**: Supports TXT, PDF, CSV, and DOCX formats
-#     - **Enter a URL**: Automatically extracts content from web articles
-#     - **Enter Text Manually**: Paste your text directly into the text area
-#     """)
-# 
-#     st.subheader("Step 2: Select Your Summarization Settings")
-#     st.markdown("""
-#     - **Summarization Method**:
-#         - *Extractive*: Selects key sentences from the original text
-#         - *Abstractive*: Generates new text that captures the meaning
-# 
-#     - **Domain Specialization**:
-#         - *General*: For everyday content
-#         - *News*: Optimized for news articles
-#         - *Academic*: Better for scholarly content
-#         - *Legal*: Enhanced for legal documents
-#         - *Technical*: Improved for technical content
-# 
-#     - **Summary Length**:
-#         - *Predefined*: Choose from Short, Medium, Long, etc.
-#         - *Custom*: Specify exact word count
-#         - *Adaptive*: Automatically scales based on document length
-# 
-#     - **Output Language**: Choose from multiple supported languages
-#     """)
-# 
-#     st.subheader("Step 3: Generate and Evaluate")
-#     st.markdown("""
-#     After clicking "Summarize":
-#     - Review your summary
-#     - Check sentiment analysis
-#     - Save to history for future reference
-#     - Compare with original text
-#     """)
-# 
-#     st.header("Understanding Summarization Methods")
-# 
-#     st.subheader("Extractive Summarization")
-#     st.write("Extractive summarization selects key sentences directly from the text to create a shorter version while maintaining the original wording. This method is best when users want an exact representation of the most important content.")
-#     st.markdown("""
-#     **Best for**:
-#     - Factual information where precise wording matters
-#     - Legal or technical documents
-#     - When you need to preserve exact phrases
-#     """)
-# 
-#     st.subheader("Abstractive Summarization")
-#     st.write("Abstractive summarization rephrases the content using AI models to generate a concise summary that conveys the same meaning. This method is useful for generating new, coherent summaries without copying sentences directly from the original text.")
-#     st.markdown("""
-#     **Best for**:
-#     - Creating more fluid, readable summaries
-#     - Condensing information from multiple sources
-#     - When exact wording is less important than key concepts
-#     """)
-# 
-#     st.subheader("Domain-Specific Summarization")
-#     st.write("Different types of content benefit from specialized approaches. Our domain-specific models are optimized for particular content types:")
-#     st.markdown("""
-#     - **News**: Focuses on key facts, events, and quotes
-#     - **Academic**: Preserves research findings and methodologies
-#     - **Legal**: Maintains important clauses and legal terminology
-#     - **Technical**: Retains technical details and procedures
-#     """)
-# 
-#     st.subheader("Multilingual Support")
-#     st.write("The summarization output can be translated into multiple languages, including French, Spanish, German, Hindi, and Chinese, making the tool useful for a global audience.")
-# 
-#     st.subheader("Summary History")
-#     st.write("Your summaries are automatically saved for future reference, allowing you to:")
-#     st.markdown("""
-#     - Review previous work
-#     - Track changes over time
-#     - Compare different summarization methods
-#     """)
-# 
-# def summary_history_page():
-#     st.title("Summary History")
-# 
-#     history = load_summary_history()
-# 
-#     if not history:
-#         st.info("No summaries have been saved yet. Generate some summaries to see them here!")
-#         return
-# 
-#     st.write(f"You have {len(history)} saved summaries.")
-# 
-#     # Filter options
-#     st.subheader("Filter History")
-#     col1, col2 = st.columns(2)
-# 
-#     with col1:
-#         method_filter = st.selectbox(
-#             "Filter by Method",
-#             ["All", "Extractive", "Abstractive"]
-#         )
-# 
-#     with col2:
-#         domain_filter = st.selectbox(
-#             "Filter by Domain",
-#             ["All", "General", "News", "Academic", "Legal", "Technical"]
-#         )
-# 
-#     # Apply filters
-#     filtered_history = history
-#     if method_filter != "All":
-#         filtered_history = [item for item in filtered_history if item["method"] == method_filter]
-# 
-#     if domain_filter != "All":
-#         filtered_history = [item for item in filtered_history if item.get("domain", "General") == domain_filter]
-# 
-#     # Sort by most recent first
-#     filtered_history.sort(key=lambda x: x["timestamp"], reverse=True)
-# 
-#     # Display summaries
-#     for i, summary in enumerate(filtered_history):
-#         with st.expander(f"{summary['timestamp']} - {summary['method']} Summary ({summary.get('domain', 'General')})"):
-#             st.markdown(f"**Source**: {summary['source_type']}")
-#             st.markdown(f"**Language**: {summary['language']}")
-# 
-#             if summary.get('original_text_preview'):
-#                 st.markdown("**Original Text Preview**:")
-#                 st.text(summary['original_text_preview'])
-# 
-#             st.markdown("**Summary**:")
-#             st.write(summary['summary'])
-# 
-#             # Option to copy to clipboard
-#             if st.button(f"Copy to Clipboard", key=f"copy_{i}"):
-#                 st.markdown(f"<textarea id='summary_{i}' style='position:absolute;left:-9999px'>{summary['summary']}</textarea>", unsafe_allow_html=True)
-#                 st.markdown(f"""
-#                 <script>
-#                     (function() {{
-#                         const el = document.getElementById('summary_{i}');
-#                         el.select();
-#                         document.execCommand('copy');
-#                     }})();
-#                 </script>
-#                 """, unsafe_allow_html=True)
-#                 st.success("Copied to clipboard!")
-# 
-# def summarization_page():
-#     st.title("Summarization")
-#     uploaded_file = st.file_uploader("Upload a file (TXT, PDF, CSV, DOCX)", type=["txt", "pdf", "csv", "docx"])
-#     url_input = st.text_input("Or enter a URL to summarize")
-#     text_input = st.text_area("Or enter text manually", height=200)
-# 
-#     text = ""
-#     source_type = "Manual Input"
-# 
-#     if uploaded_file:
-#         file_name = uploaded_file.name.lower()
-#         source_type = f"File: {file_name}"
-# 
-#         if file_name.endswith(".pdf"):
-#             text = extract_text_from_pdf(uploaded_file)
-#         elif file_name.endswith(".csv"):
-#             text = extract_text_from_csv(uploaded_file)
-#         elif file_name.endswith(".docx"):
-#             text = extract_text_from_docx(uploaded_file)
-#         else:
-#             text = uploaded_file.read().decode("utf-8")
-#     elif url_input:
-#         text = extract_text_from_url(url_input)
-#         source_type = f"URL: {url_input}"
-#     elif text_input.strip():
-#         text = text_input.strip()
-# 
-#     if text:
-#         method = st.radio("Choose Summarization Method", ("Extractive", "Abstractive"))
-# 
-#         # Add a note about abstractive summarization
-#         if method == "Abstractive":
-#             st.info("Note: Abstractive summarization may take a bit longer to generate but creates more human-like summaries.")
-# 
-#         # Domain selection for domain-specific summarization
-#         domain = st.selectbox(
-#             "Select Content Domain",
-#             ["General", "News", "Academic", "Legal", "Technical"],
-#             help="Select the type of content to optimize the summarization"
-#         )
-# 
-#         # Calculate word count for adaptive summary length
-#         word_count = len(text.split())
-#         st.write(f"Document length: Approximately {word_count} words")
-# 
-#         # Option to choose between predefined sizes or custom length
-#         summary_size_option = st.radio("Summary Length Option", ("Predefined", "Custom", "Adaptive"))
-# 
-#         if summary_size_option == "Predefined":
-#             summary_size = st.radio("Select Summary Length",
-#                                    ("Short", "Medium", "Long", "Very Long", "Executive Summary"))
-# 
-#             if summary_size == "Short":
-#                 summary_length = 100
-#             elif summary_size == "Medium":
-#                 summary_length = 250
-#             elif summary_size == "Long":
-#                 summary_length = 500
-#             elif summary_size == "Very Long":
-#                 summary_length = 1000
-#             else:  # Executive Summary
-#                 summary_length = 2000
-# 
-#         elif summary_size_option == "Custom":
-#             # Allow the user to input a custom length
-#             summary_length = st.slider("Select custom summary length (words)",
-#                                       min_value=50, max_value=5000, value=500, step=50)
-# 
-#         else:  # Adaptive
-#             # Automatically calculate a reasonable summary length based on document size
-#             suggested_length = max(100, min(3000, int(word_count * 0.07)))
-#             st.write(f"Suggested summary length: {suggested_length} words (about 7% of document)")
-#             summary_length = st.slider("Adjust summary length",
-#                                       min_value=100, max_value=5000,
-#                                       value=suggested_length, step=50)
-# 
-#         language = st.selectbox("Choose output language", list(LANGUAGE_CODE_MAP.keys()))
-# 
-#         # Warning for very long summaries with non-English languages
-#         if (summary_size_option == "Predefined" and summary_size in ["Very Long", "Executive Summary"]) and language != "English":
-#             st.warning("Very long summaries may have issues when translating to non-English languages. For best results with long summaries, use English output.")
-# 
-#         # Advanced options in expander - simplified
-#         with st.expander("Advanced Options"):
-#             save_to_history = st.checkbox("Save summary to history", value=True)
-# 
-#         if st.button("Summarize"):
-#             with st.spinner(f"Generating {summary_length}-word {domain.lower()} {method.lower()} summary..."):
-#                 try:
-#                     progress_bar = st.progress(0)
-# 
-#                     # Update progress bar for initial processing
-#                     progress_bar.progress(10)
-# 
-#                     # Use the hierarchical approach for very long documents
-#                     if word_count > 10000:
-#                         st.info(f"Document is very long ({word_count} words). Using hierarchical summarization approach.")
-#                         progress_bar.progress(30)
-#                         summary = summarize_long_document(text, summary_length, method, domain)
-#                     else:
-#                         if method == "Extractive":
-#                             progress_bar.progress(30)
-#                             summary = extractive_summary(text, summary_length)
-#                         else:
-#                             progress_bar.progress(30)
-#                             summary = abstractive_summary(text, summary_length, domain)
-# 
-#                     progress_bar.progress(60)
-# 
-#                     # Add language check for very long summaries
-#                     if language != "English" and len(summary.split()) > 1000:
-#                         st.warning("The summary is very long for translation. Translation will be performed on the first 1000 words only.")
-#                         summary_to_translate = " ".join(summary.split()[:1000])
-#                         translated_portion = translate_text(summary_to_translate, language)
-#                         st.success(f"Translation completed for the first 1000 words. The rest remains in English.")
-#                         summary = translated_portion + "\n\n[Translation limit reached. Remaining text in English:]\n\n" + " ".join(summary.split()[1000:])
-#                     elif language != "English":
-#                         summary = translate_text(summary, language)
-# 
-#                     progress_bar.progress(90)
-# 
-#                     st.subheader("Summary:")
-#                     st.write(summary)
-# 
-#                     # Add word count of summary
-#                     summary_word_count = len(summary.split())
-#                     st.write(f"Summary length: {summary_word_count} words (target was {summary_length})")
-# 
-#                     # Save to history if enabled
-#                     if save_to_history:
-#                         summary_id = save_summary(source_type, method, language, domain, summary, text)
-#                         st.success(f"Summary saved to history")
-# 
-#                     progress_bar.progress(100)
-# 
-#                     # Show sentiment analysis
-#                     sentiment, scores = sentiment_analysis(summary)
-#                     st.subheader("Sentiment Analysis:")
-#                     st.write(f"Overall Sentiment: {sentiment}")
-# 
-#                     # Display sentiment scores
-#                     cols = st.columns(4)
-#                     with cols[0]:
-#                         st.metric("Positive", f"{scores['pos']:.2f}")
-#                     with cols[1]:
-#                         st.metric("Negative", f"{scores['neg']:.2f}")
-#                     with cols[2]:
-#                         st.metric("Neutral", f"{scores['neu']:.2f}")
-#                     with cols[3]:
-#                         st.metric("Compound", f"{scores['compound']:.2f}")
-# 
-#                     # Option to compare with original text
-#                     with st.expander("Compare with Original Text"):
-#                         st.write(text)
-# 
-#                 except Exception as e:
-#                     st.error(f"An error occurred during summarization: {str(e)}")
-#                     st.info("Try with a shorter text or different summarization settings.")
-#     else:
-#         st.info("Please upload a file, enter a URL, or paste text to summarize.")
-# 
-# # Create the main navigation
-# def main():
-#     st.sidebar.title("Navigation")
-#     page = st.sidebar.radio("Go to", ["Home", "Summarization", "Summary History", "About"])
-# 
-#     if page == "Home":
-#         home_page()
-#     elif page == "Summarization":
-#         summarization_page()
-#     elif page == "Summary History":
-#         summary_history_page()
-#     elif page == "About":
-#         about_page()
-# 
-#     st.sidebar.divider()
-#     st.sidebar.subheader("About")
-#     st.sidebar.info(
-#         """
-#         This app uses state-of-the-art AI models to create high-quality summaries of articles,
-#         documents, and other text content.
-# 
-#         Created with:
-#         - Streamlit
-#         - Hugging Face Transformers
-#         - NLTK
-#         - TextRank
-#         - PyMuPDF
-#         """
-#     )
-# 
-#     # Add version info
-#     st.sidebar.caption("Concise Craft v1.0")
-# 
-# if __name__ == "__main__":
-#     main()
+%%writefile app.py
+import streamlit as st
+import pandas as pd
+import nltk
+import torch
+import fitz  # PyMuPDF for extracting text from PDFs
+import docx  # for extracting text from Word documents
+import string
+import uuid
+import json
+import os
+from datetime import datetime
+from docx import Document
+from newspaper import Article
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.corpus import stopwords
+from transformers import (
+    BartForConditionalGeneration, BartTokenizer,
+    MBartForConditionalGeneration, MBart50TokenizerFast,
+    PegasusForConditionalGeneration, PegasusTokenizer,
+    T5ForConditionalGeneration, T5Tokenizer
+)
+from summa.summarizer import summarize as textrank_summarize
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+# Set page config - this must be the first Streamlit command
+st.set_page_config(
+    page_title="Concise Craft: AI-Driven Article Condenser",
+    page_icon="📝",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Load NLP models - fix for punkt tokenizer
+nltk.download("punkt", quiet=True)
+nltk.download("stopwords", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+
+sentiment_analyzer = SentimentIntensityAnalyzer()
+
+# Create a directory for saving summaries if it doesn't exist
+if not os.path.exists("summary_history"):
+    os.makedirs("summary_history")
+
+# Load summary history if it exists
+def load_summary_history():
+    if os.path.exists("summary_history/history.json"):
+        with open("summary_history/history.json", "r") as f:
+            return json.load(f)
+    return []
+
+# Save a summary to history
+def save_summary(source_type, summary_method, language, domain, summary_text, original_text=None):
+    history = load_summary_history()
+    summary_id = str(uuid.uuid4())
+    summary_entry = {
+        "id": summary_id,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source_type": source_type,
+        "method": summary_method,
+        "language": language,
+        "domain": domain,
+        "summary": summary_text,
+        "original_text_preview": original_text[:200] + "..." if original_text else None
+    }
+    history.append(summary_entry)
+
+    with open("summary_history/history.json", "w") as f:
+        json.dump(history, f)
+
+    return summary_id
+
+# Cache models to avoid reloading - Use only the models we need to reduce memory usage
+@st.cache_resource
+def load_models():
+    bart_tokenizer = BartTokenizer.from_pretrained("facebook/bart-large-cnn")
+    bart_model = BartForConditionalGeneration.from_pretrained("facebook/bart-large-cnn")
+
+    mbart_tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
+    mbart_model = MBartForConditionalGeneration.from_pretrained("facebook/mbart-large-50-many-to-many-mmt")
+
+    return {
+        "bart": (bart_tokenizer, bart_model),
+        "mbart": (mbart_tokenizer, mbart_model)
+    }
+
+models = load_models()
+
+# Define correct language codes for mBART
+LANGUAGE_CODE_MAP = {
+    "English": "en_XX",
+    "French": "fr_XX",
+    "Spanish": "es_XX",
+    "German": "de_DE",
+    "Hindi": "hi_IN",
+    "Chinese": "zh_CN"
+}
+
+# Domain-specific models mapping - simplified to use only BART
+DOMAIN_MODELS = {
+    "General": "bart",
+    "News": "bart",
+    "Academic": "bart",
+    "Legal": "bart",
+    "Technical": "bart"
+}
+
+def extract_text_from_pdf(uploaded_file):
+    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+    return "\n".join([page.get_text("text") for page in doc])
+
+def extract_text_from_csv(uploaded_file):
+    df = pd.read_csv(uploaded_file)
+    text_columns = df.select_dtypes(include=['object'])
+    if text_columns.empty:
+        return "No textual data found in CSV file."
+    return "\n".join(text_columns.astype(str).apply(lambda x: ' '.join(x), axis=1))
+
+def extract_text_from_docx(uploaded_file):
+    doc = Document(uploaded_file)
+    return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
+
+def extract_text_from_url(url):
+    article = Article(url)
+    article.download()
+    article.parse()
+    return article.text
+
+def translate_text(text, tgt_lang):
+    if tgt_lang not in LANGUAGE_CODE_MAP:
+        return "Error: Unsupported Language!"
+
+    # Handle potential issues with long text
+    if len(text) > 1000:
+        # For very long texts, truncate to avoid issues
+        text = text[:1000] + "..."
+
+    mbart_tokenizer, mbart_model = models["mbart"]
+    encoded_text = mbart_tokenizer(text, return_tensors="pt")
+    generated_tokens = mbart_model.generate(
+        **encoded_text,
+        forced_bos_token_id=mbart_tokenizer.lang_code_to_id[LANGUAGE_CODE_MAP[tgt_lang]]
+    )
+
+    return mbart_tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
+
+def chunk_long_document(text, chunk_size=5000):
+    """
+    Split a very long document into manageable chunks
+    """
+    words = text.split()
+    return [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+
+def extractive_summary(text, summary_length):
+    """
+    Generate an extractive summary using TextRank algorithm
+    """
+    # Check if text is long enough for summarization
+    if len(text.split()) < 100:
+        return text
+
+    # For very long texts, create a shortened version for summarization
+    if len(text) > 50000:  # Approximate char limit for summarize function
+        text = text[:50000]
+
+    summary = textrank_summarize(text, words=summary_length)
+
+    # If summarization fails, return the first part of the text up to summary_length
+    if not summary:
+        words = text.split()
+        if len(words) > summary_length:
+            return " ".join(words[:summary_length])
+        return text
+
+    return summary
+
+def abstractive_summary(text, summary_length, domain="General"):
+    """
+    Generate an abstractive summary using BART
+    Optimized for speed by using only one model
+    """
+    # Get the appropriate tokenizer and model
+    tokenizer, model = models["bart"]
+
+    # Limit input text to prevent model from hallucinating on long inputs
+    max_input_length = 1024
+    truncated_text = text[:max_input_length]
+
+    # Map summary_length to appropriate token counts based on desired word count
+    # Approximate token-to-word ratio for English is roughly 1.3
+    token_multiplier = 1.3
+    min_tokens = int(summary_length * 0.8 * token_multiplier)
+    max_tokens = int(summary_length * 1.2 * token_multiplier)
+
+    # For very long summaries, we need to ensure we're not exceeding model limits
+    max_tokens = min(max_tokens, 512)  # Cap maximum tokens for faster generation
+
+    # Configure generation parameters
+    inputs = tokenizer(truncated_text, return_tensors="pt", max_length=max_input_length, truncation=True)
+
+    # Use faster generation settings
+    summary_ids = model.generate(
+        inputs["input_ids"],
+        max_length=max_tokens,
+        min_length=min_tokens,
+        length_penalty=2.0, # favors shorter summaries.
+        num_beams=2,  # controls the search for the best summary 
+        early_stopping=True,
+        no_repeat_ngram_size=2,  # avoids repeating short phrases.
+        do_sample=False #disables randomness to keep output stable.
+    )
+
+    return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+
+def summarize_long_document(text, summary_length, method="Extractive", domain="General"):
+    """
+    Handles very long documents by:
+    1. Splitting into chunks
+    2. Summarizing each chunk
+    3. Combining and summarizing again
+    """
+    # If document is not very long, summarize directly
+    word_count = len(text.split())
+    if word_count < 10000:
+        if method == "Extractive":
+            return extractive_summary(text, summary_length)
+        else:
+            return abstractive_summary(text, summary_length, domain)
+
+    # For very long documents, use a hierarchical approach
+    chunks = chunk_long_document(text)
+
+    # First level: summarize each chunk
+    chunk_summaries = []
+    chunk_summary_length = min(250, summary_length // 2)
+
+    for chunk in chunks:
+        if method == "Extractive":
+            chunk_summary = extractive_summary(chunk, chunk_summary_length)
+        else:
+            chunk_summary = abstractive_summary(chunk, chunk_summary_length, domain)
+        chunk_summaries.append(chunk_summary)
+
+    # Second level: summarize the combined summaries
+    combined_summaries = " ".join(chunk_summaries)
+
+    if method == "Extractive":
+        final_summary = extractive_summary(combined_summaries, summary_length)
+    else:
+        final_summary = abstractive_summary(combined_summaries, summary_length, domain)
+
+    return final_summary
+
+def sentiment_analysis(text):
+    # For very long texts, analyze only the first part
+    if len(text) > 10000:
+        text = text[:10000]
+
+    scores = sentiment_analyzer.polarity_scores(text)
+    if scores['compound'] >= 0.05:
+        return "Positive 😊", scores
+    elif scores['compound'] <= -0.05:
+        return "Negative 😞", scores
+    else:
+        return "Neutral 😐", scores
+
+def home_page():
+    st.title("Welcome to Concise Craft: AI-Driven Article Condenser")
+    st.write("Experience the power of AI in summarizing articles efficiently and accurately.")
+
+    st.subheader("Key Features")
+    st.markdown("""
+    - **Multiple Summarization Methods**: Choose between extractive and abstractive summarization
+    - **Domain-Specific Summarization**: Optimize for different content types (news, academic, legal)
+    - **Multilingual Support**: Translate summaries into multiple languages
+    - **Sentiment Analysis**: Analyze the sentiment tone of your summaries
+    - **Summary History**: Save and access your previous summaries
+    """)
+
+    st.subheader("Get Started")
+    st.markdown("""
+    Navigate to the "Summarization" page to start condensing your content:
+    1. Upload a document, enter a URL, or paste text
+    2. Choose your preferred summarization method and settings
+    3. Generate a high-quality summary tailored to your needs
+    """)
+
+def about_page():
+    st.title("About Concise Craft")
+    st.write("Concise Craft is an AI-powered tool designed to condense long articles into clear and concise summaries. It supports both extractive and abstractive summarization methods, allowing users to choose the best approach for their needs.")
+
+    st.header("How to Use Concise Craft")
+
+    st.subheader("Step 1: Choose Your Input Method")
+    st.markdown("""
+    - **Upload a File**: Supports TXT, PDF, CSV, and DOCX formats
+    - **Enter a URL**: Automatically extracts content from web articles
+    - **Enter Text Manually**: Paste your text directly into the text area
+    """)
+
+    st.subheader("Step 2: Select Your Summarization Settings")
+    st.markdown("""
+    - **Summarization Method**:
+        - *Extractive*: Selects key sentences from the original text
+        - *Abstractive*: Generates new text that captures the meaning
+
+    - **Domain Specialization**:
+        - *General*: For everyday content
+        - *News*: Optimized for news articles
+        - *Academic*: Better for scholarly content
+        - *Legal*: Enhanced for legal documents
+        - *Technical*: Improved for technical content
+
+    - **Summary Length**:
+        - *Predefined*: Choose from Short, Medium, Long, etc.
+        - *Custom*: Specify exact word count
+        - *Adaptive*: Automatically scales based on document length
+
+    - **Output Language**: Choose from multiple supported languages
+    """)
+
+    st.subheader("Step 3: Generate and Evaluate")
+    st.markdown("""
+    After clicking "Summarize":
+    - Review your summary
+    - Check sentiment analysis
+    - Save to history for future reference
+    - Compare with original text
+    """)
+
+    st.header("Understanding Summarization Methods")
+
+    st.subheader("Extractive Summarization")
+    st.write("Extractive summarization selects key sentences directly from the text to create a shorter version while maintaining the original wording. This method is best when users want an exact representation of the most important content.")
+    st.markdown("""
+    **Best for**:
+    - Factual information where precise wording matters
+    - Legal or technical documents
+    - When you need to preserve exact phrases
+    """)
+
+    st.subheader("Abstractive Summarization")
+    st.write("Abstractive summarization rephrases the content using AI models to generate a concise summary that conveys the same meaning. This method is useful for generating new, coherent summaries without copying sentences directly from the original text.")
+    st.markdown("""
+    **Best for**:
+    - Creating more fluid, readable summaries
+    - Condensing information from multiple sources
+    - When exact wording is less important than key concepts
+    """)
+
+    st.subheader("Domain-Specific Summarization")
+    st.write("Different types of content benefit from specialized approaches. Our domain-specific models are optimized for particular content types:")
+    st.markdown("""
+    - **News**: Focuses on key facts, events, and quotes
+    - **Academic**: Preserves research findings and methodologies
+    - **Legal**: Maintains important clauses and legal terminology
+    - **Technical**: Retains technical details and procedures
+    """)
+
+    st.subheader("Multilingual Support")
+    st.write("The summarization output can be translated into multiple languages, including French, Spanish, German, Hindi, and Chinese, making the tool useful for a global audience.")
+
+    st.subheader("Summary History")
+    st.write("Your summaries are automatically saved for future reference, allowing you to:")
+    st.markdown("""
+    - Review previous work
+    - Track changes over time
+    - Compare different summarization methods
+    """)
+
+def summary_history_page():
+    st.title("Summary History")
+
+    history = load_summary_history()
+
+    if not history:
+        st.info("No summaries have been saved yet. Generate some summaries to see them here!")
+        return
+
+    st.write(f"You have {len(history)} saved summaries.")
+
+    # Filter options
+    st.subheader("Filter History")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        method_filter = st.selectbox(
+            "Filter by Method",
+            ["All", "Extractive", "Abstractive"]
+        )
+
+    with col2:
+        domain_filter = st.selectbox(
+            "Filter by Domain",
+            ["All", "General", "News", "Academic", "Legal", "Technical"]
+        )
+
+    # Apply filters
+    filtered_history = history
+    if method_filter != "All":
+        filtered_history = [item for item in filtered_history if item["method"] == method_filter]
+
+    if domain_filter != "All":
+        filtered_history = [item for item in filtered_history if item.get("domain", "General") == domain_filter]
+
+    # Sort by most recent first
+    filtered_history.sort(key=lambda x: x["timestamp"], reverse=True)
+
+    # Display summaries
+    for i, summary in enumerate(filtered_history):
+        with st.expander(f"{summary['timestamp']} - {summary['method']} Summary ({summary.get('domain', 'General')})"):
+            st.markdown(f"**Source**: {summary['source_type']}")
+            st.markdown(f"**Language**: {summary['language']}")
+
+            if summary.get('original_text_preview'):
+                st.markdown("**Original Text Preview**:")
+                st.text(summary['original_text_preview'])
+
+            st.markdown("**Summary**:")
+            st.write(summary['summary'])
+
+            # Option to copy to clipboard
+            if st.button(f"Copy to Clipboard", key=f"copy_{i}"):
+                st.markdown(f"<textarea id='summary_{i}' style='position:absolute;left:-9999px'>{summary['summary']}</textarea>", unsafe_allow_html=True)
+                st.markdown(f"""
+                <script>
+                    (function() {{
+                        const el = document.getElementById('summary_{i}');
+                        el.select();
+                        document.execCommand('copy');
+                    }})();
+                </script>
+                """, unsafe_allow_html=True)
+                st.success("Copied to clipboard!")
+
+def summarization_page():
+    st.title("Summarization")
+    uploaded_file = st.file_uploader("Upload a file (TXT, PDF, CSV, DOCX)", type=["txt", "pdf", "csv", "docx"])
+    url_input = st.text_input("Or enter a URL to summarize")
+    text_input = st.text_area("Or enter text manually", height=200)
+
+    text = ""
+    source_type = "Manual Input"
+
+    if uploaded_file:
+        file_name = uploaded_file.name.lower()
+        source_type = f"File: {file_name}"
+
+        if file_name.endswith(".pdf"):
+            text = extract_text_from_pdf(uploaded_file)
+        elif file_name.endswith(".csv"):
+            text = extract_text_from_csv(uploaded_file)
+        elif file_name.endswith(".docx"):
+            text = extract_text_from_docx(uploaded_file)
+        else:
+            text = uploaded_file.read().decode("utf-8")
+    elif url_input:
+        text = extract_text_from_url(url_input)
+        source_type = f"URL: {url_input}"
+    elif text_input.strip():
+        text = text_input.strip()
+
+    if text:
+        method = st.radio("Choose Summarization Method", ("Extractive", "Abstractive"))
+
+        # Add a note about abstractive summarization
+        if method == "Abstractive":
+            st.info("Note: Abstractive summarization may take a bit longer to generate but creates more human-like summaries.")
+
+        # Domain selection for domain-specific summarization
+        domain = st.selectbox(
+            "Select Content Domain",
+            ["General", "News", "Academic", "Legal", "Technical"],
+            help="Select the type of content to optimize the summarization"
+        )
+
+        # Calculate word count for adaptive summary length
+        word_count = len(text.split())
+        st.write(f"Document length: Approximately {word_count} words")
+
+        # Option to choose between predefined sizes or custom length
+        summary_size_option = st.radio("Summary Length Option", ("Predefined", "Custom", "Adaptive"))
+
+        if summary_size_option == "Predefined":
+            summary_size = st.radio("Select Summary Length",
+                                   ("Short", "Medium", "Long", "Very Long", "Executive Summary"))
+
+            if summary_size == "Short":
+                summary_length = 100
+            elif summary_size == "Medium":
+                summary_length = 250
+            elif summary_size == "Long":
+                summary_length = 500
+            elif summary_size == "Very Long":
+                summary_length = 1000
+            else:  # Executive Summary
+                summary_length = 2000
+
+        elif summary_size_option == "Custom":
+            # Allow the user to input a custom length
+            summary_length = st.slider("Select custom summary length (words)",
+                                      min_value=50, max_value=5000, value=500, step=50)
+
+        else:  # Adaptive
+            # Automatically calculate a reasonable summary length based on document size
+            suggested_length = max(100, min(3000, int(word_count * 0.07)))
+            st.write(f"Suggested summary length: {suggested_length} words (about 7% of document)")
+            summary_length = st.slider("Adjust summary length",
+                                      min_value=100, max_value=5000,
+                                      value=suggested_length, step=50)
+
+        language = st.selectbox("Choose output language", list(LANGUAGE_CODE_MAP.keys()))
+
+        # Warning for very long summaries with non-English languages
+        if (summary_size_option == "Predefined" and summary_size in ["Very Long", "Executive Summary"]) and language != "English":
+            st.warning("Very long summaries may have issues when translating to non-English languages. For best results with long summaries, use English output.")
+
+        # Advanced options in expander - simplified
+        with st.expander("Advanced Options"):
+            save_to_history = st.checkbox("Save summary to history", value=True)
+
+        if st.button("Summarize"):
+            with st.spinner(f"Generating {summary_length}-word {domain.lower()} {method.lower()} summary..."):
+                try:
+                    progress_bar = st.progress(0)
+
+                    # Update progress bar for initial processing
+                    progress_bar.progress(10)
+
+                    # Use the hierarchical approach for very long documents
+                    if word_count > 10000:
+                        st.info(f"Document is very long ({word_count} words). Using hierarchical summarization approach.")
+                        progress_bar.progress(30)
+                        summary = summarize_long_document(text, summary_length, method, domain)
+                    else:
+                        if method == "Extractive":
+                            progress_bar.progress(30)
+                            summary = extractive_summary(text, summary_length)
+                        else:
+                            progress_bar.progress(30)
+                            summary = abstractive_summary(text, summary_length, domain)
+
+                    progress_bar.progress(60)
+
+                    # Add language check for very long summaries
+                    if language != "English" and len(summary.split()) > 1000:
+                        st.warning("The summary is very long for translation. Translation will be performed on the first 1000 words only.")
+                        summary_to_translate = " ".join(summary.split()[:1000])
+                        translated_portion = translate_text(summary_to_translate, language)
+                        st.success(f"Translation completed for the first 1000 words. The rest remains in English.")
+                        summary = translated_portion + "\n\n[Translation limit reached. Remaining text in English:]\n\n" + " ".join(summary.split()[1000:])
+                    elif language != "English":
+                        summary = translate_text(summary, language)
+
+                    progress_bar.progress(90)
+
+                    st.subheader("Summary:")
+                    st.write(summary)
+
+                    # Add word count of summary
+                    summary_word_count = len(summary.split())
+                    st.write(f"Summary length: {summary_word_count} words (target was {summary_length})")
+
+                    # Save to history if enabled
+                    if save_to_history:
+                        summary_id = save_summary(source_type, method, language, domain, summary, text)
+                        st.success(f"Summary saved to history")
+
+                    progress_bar.progress(100)
+
+                    # Show sentiment analysis
+                    sentiment, scores = sentiment_analysis(summary)
+                    st.subheader("Sentiment Analysis:")
+                    st.write(f"Overall Sentiment: {sentiment}")
+
+                    # Display sentiment scores
+                    cols = st.columns(4)
+                    with cols[0]:
+                        st.metric("Positive", f"{scores['pos']:.2f}")
+                    with cols[1]:
+                        st.metric("Negative", f"{scores['neg']:.2f}")
+                    with cols[2]:
+                        st.metric("Neutral", f"{scores['neu']:.2f}")
+                    with cols[3]:
+                        st.metric("Compound", f"{scores['compound']:.2f}")
+
+                    # Option to compare with original text
+                    with st.expander("Compare with Original Text"):
+                        st.write(text)
+
+                except Exception as e:
+                    st.error(f"An error occurred during summarization: {str(e)}")
+                    st.info("Try with a shorter text or different summarization settings.")
+    else:
+        st.info("Please upload a file, enter a URL, or paste text to summarize.")
+
+# Create the main navigation
+def main():
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["Home", "Summarization", "Summary History", "About"])
+
+    if page == "Home":
+        home_page()
+    elif page == "Summarization":
+        summarization_page()
+    elif page == "Summary History":
+        summary_history_page()
+    elif page == "About":
+        about_page()
+
+    st.sidebar.divider()
+    st.sidebar.subheader("About")
+    st.sidebar.info(
+        """
+        This app uses state-of-the-art AI models to create high-quality summaries of articles,
+        documents, and other text content.
+
+        Created with:
+        - Streamlit
+        - Hugging Face Transformers
+        - NLTK
+        - TextRank
+        - PyMuPDF
+        """
+    )
+
+    # Add version info
+    st.sidebar.caption("Concise Craft v1.0")
+
+if __name__ == "__main__":
+    main()
